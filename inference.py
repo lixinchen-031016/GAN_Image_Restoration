@@ -27,21 +27,11 @@ def add_random_mask(img_array, mask_size=8):
     top = np.random.randint(0, img_array.shape[0] - mask_size)
     left = np.random.randint(0, img_array.shape[1] - mask_size)
     
-    # 创建带有渐变边缘的遮罩
-    mask = np.ones_like(img_array)
-    fade_width = 2  # 渐变边缘宽度
-    
-    for f in range(fade_width):
-        alpha = 1 - (f / fade_width)
-        mask[
-            top + f:top + mask_size - f,
-            left + f:left + mask_size - f,
-            :
-        ] = alpha
-        
-    # 应用遮罩
-    masked_array = img_array * mask
-    return masked_array, mask
+    # 删除渐变遮罩逻辑，保持与训练数据一致的硬边界遮罩
+    # 创建全零遮罩区域（三通道）
+    masked_array = img_array.copy()
+    masked_array[top:top+mask_size, left:left+mask_size, :] = 0
+    return masked_array, None  # 不再返回mask矩阵
 
 def show_repair_result(original, masked, repaired):
     """可视化修复效果"""
@@ -88,10 +78,9 @@ def process_and_stitch(patches, generator):
     processed_patches = []
     
     for patch in patches:
-        # 使用固定种子保证结果一致性
-        np.random.seed(42)
+        # 删除固定种子设置，允许不同patch使用不同噪声
         # 修改噪声生成方式，使其与训练分布一致
-        noise = np.random.normal(0, 1, (1, 32, 32, 1))  # 确保噪声分布为标准正态分布
+        noise = np.random.normal(0, 1, (1, 32, 32, 1))  # 每次生成新噪声
         
         # 对每个小块应用遮罩并修复
         masked_patch, _ = add_random_mask(patch)
@@ -173,7 +162,7 @@ if __name__ == "__main__":
     (_, _, _), (original_test, masked_test, labels_test) = load_cifar100_with_mask()
     
     # 选择测试集中第一张图片
-    test_idx = 0
+    test_idx = 3
     test_img = original_test[test_idx]
     
     # 修复数据集中的图片
