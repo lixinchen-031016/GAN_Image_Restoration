@@ -26,13 +26,22 @@ from data_loader import load_cifar100_with_mask
 import numpy as np
 
 # 参数设置
-BATCH_SIZE = 256  # 增大batch_size提升训练稳定性
-EPOCHS = 1000      # 延长训练轮数
-INITIAL_LEARNING_RATE = 0.0001  # 降低初始学习率
-MIN_LEARNING_RATE = 0.00001      # 添加最小学习率限制
-SMOOTH = 0.1  # 新增标签平滑系数
-SAVE_INTERVAL = 100  # 新增模型保存间隔参数
-WARMUP_EPOCHS = int(EPOCHS * 0.1)  # 新增预热周期参数（总训练周期的10%）
+BATCH_SIZE = 256
+EPOCHS = 1000
+INITIAL_LEARNING_RATE = 0.0001
+MIN_LEARNING_RATE = 0.00001
+SAVE_INTERVAL = 100
+WARMUP_EPOCHS = int(EPOCHS * 0.1)
+SMOOTH_START = 0.2  # 新增初始平滑系数
+SMOOTH_END = 0.01   # 新增最终平滑系数
+
+# 新增动态标签平滑系数计算函数
+def smooth_schedule(epoch):
+    if epoch < WARMUP_EPOCHS:
+        return SMOOTH_START
+    # 余弦衰减从WARMUP_EPOCHS到EPOCHS
+    progress = (epoch - WARMUP_EPOCHS) / (EPOCHS - WARMUP_EPOCHS)
+    return SMOOTH_END + 0.5 * (SMOOTH_START - SMOOTH_END) * (1 + tf.cos(np.pi * progress))
 
 # 学习率衰减函数（修改为包含预热阶段的余弦退火）
 def decayed_learning_rate(epoch):
@@ -232,7 +241,7 @@ def train_step(real_imgs, masked_imgs, epoch):
 
         d_fake_validity, d_fake_class = discriminator(tf.convert_to_tensor(fake_imgs))
         d_loss_fake_validity = tf.keras.losses.binary_crossentropy(
-            tf.zeros_like(d_fake_validity) + SMOOTH/2,  # 使用定义的平滑系数
+            tf.zeros_like(d_fake_validity) + smooth_schedule(epoch)/2,  # 改为动态平滑系数
             d_fake_validity
         )
         d_loss_fake_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_fake_class)
@@ -261,7 +270,8 @@ def train_step(real_imgs, masked_imgs, epoch):
         
         # 计算两种损失分量
         validity_loss = tf.keras.losses.binary_crossentropy(
-            tf.ones_like(valid_pred), valid_pred
+            tf.ones_like(valid_pred) - smooth_schedule(epoch)/2,  # 真实标签也添加动态平滑
+            valid_pred
         )
         class_loss = tf.keras.losses.sparse_categorical_crossentropy(
             tf.zeros((BATCH_SIZE, 1)), class_pred
