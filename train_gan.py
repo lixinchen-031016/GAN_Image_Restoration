@@ -27,11 +27,24 @@ import numpy as np
 
 # 参数设置
 BATCH_SIZE = 256  # 增大batch_size提升训练稳定性
-EPOCHS = 500      # 延长训练轮数
+EPOCHS = 1000      # 延长训练轮数
 INITIAL_LEARNING_RATE = 0.0001  # 降低初始学习率
 MIN_LEARNING_RATE = 0.00001      # 添加最小学习率限制
 SMOOTH = 0.1  # 新增标签平滑系数
-SAVE_INTERVAL = 50  # 新增模型保存间隔参数
+SAVE_INTERVAL = 100  # 新增模型保存间隔参数
+WARMUP_EPOCHS = int(EPOCHS * 0.1)  # 新增预热周期参数（总训练周期的10%）
+
+# 学习率衰减函数（修改为包含预热阶段的余弦退火）
+def decayed_learning_rate(epoch):
+    # 预热阶段：线性增加学习率
+    if epoch < WARMUP_EPOCHS:
+        warmup_progress = epoch / WARMUP_EPOCHS
+        return MIN_LEARNING_RATE + (INITIAL_LEARNING_RATE - MIN_LEARNING_RATE) * warmup_progress
+    
+    # 余弦退火阶段
+    cosine_epoch = epoch - WARMUP_EPOCHS
+    cosine_decay = tf.cos(np.pi * cosine_epoch / (EPOCHS - WARMUP_EPOCHS))
+    return MIN_LEARNING_RATE + 0.5 * (INITIAL_LEARNING_RATE - MIN_LEARNING_RATE) * (1 + cosine_decay)
 
 # 构建并编译判别器（关键修改：删除编译后的冻结操作）
 generator = build_generator()
@@ -266,6 +279,9 @@ def train_step(real_imgs, masked_imgs, epoch):
     
     # 打印进度（修改损失显示方式）
     tf.print(f"Epoch {epoch+1}/{EPOCHS} | D Loss Real: {d_loss_real} | D Loss Fake: {d_loss_fake} | G Loss: {total_g_loss}")
+    
+    # 返回生成器总损失用于监控
+    return total_g_loss
 
 # 修改点2：移除模型保存操作到函数外部
 # 删除以下代码：
@@ -278,14 +294,38 @@ idx = np.random.randint(0, x_train_real.shape[0], BATCH_SIZE)
 real_imgs = tf.data.Dataset.from_tensors(x_train_real[idx]).prefetch(tf.data.AUTOTUNE)
 masked_imgs = tf.data.Dataset.from_tensors(x_train_masked[idx]).prefetch(tf.data.AUTOTUNE)
 
-# 修改点3：重构训练循环
+# 修改点3：重构训练循环（添加最佳模型保存逻辑）
+# 在训练循环前添加最佳损失跟踪变量
+best_g_loss = float('inf')  # 添加变量初始化
+
 for epoch in tqdm(range(EPOCHS), desc='Training GAN', unit='epoch'):
+    current_lr = decayed_learning_rate(epoch)
+    generator.optimizer.learning_rate.assign(current_lr)
+    discriminator.optimizer.learning_rate.assign(current_lr * 0.5)  # 保持判别器学习率为生成器的一半
+    
+    epoch_g_losses = []
+    
     # 执行训练步骤
     for r_imgs, m_imgs in zip(real_imgs, masked_imgs):
-        train_step(r_imgs, m_imgs, epoch)
-
-    # 修改点4：将模型保存移到训练循环外部（使用Eager模式）
+        g_loss = train_step(r_imgs, m_imgs, epoch)
+        epoch_g_losses.append(g_loss.numpy())  # 收集生成器损失
+    
+    # 计算平均生成器损失
+    avg_g_loss = np.mean(epoch_g_losses)
+    
+    # 保存最佳模型（当生成器损失降低时）
+    if avg_g_loss < best_g_loss:
+        os.makedirs("models", exist_ok=True)
+        generator.save_weights("models/generator_best.weights.h5")
+        discriminator.save_weights("models/discriminator_best.weights.h5")
+        best_g_loss = avg_g_loss
+        tf.print(f"\n保存最佳模型（epoch {epoch+1} 损失：{avg_g_loss:.4f})")
+    
+    # 周期保存当前模型
     if (epoch+1) % SAVE_INTERVAL == 0:
         os.makedirs("models", exist_ok=True)
         generator.save_weights(f"models/generator_epoch_{epoch+1}.weights.h5")
         discriminator.save_weights(f"models/discriminator_epoch_{epoch+1}.weights.h5")
+
+    # 添加学习率日志输出
+    tf.print(f"当前学习率: 生成器={current_lr:.6f}, 判别器={current_lr*0.5:.6f}")
