@@ -60,6 +60,38 @@ def build_generator():
         combined = layers.BatchNormalization()(combined)
         combined = layers.Activation('relu')(combined)
         
+        # 新增自注意力模块
+        class SelfAttentionBlock(layers.Layer):
+            def call(self, x):
+                batch_size = tf.shape(x)[0]
+                channels = x.shape[-1]  # 使用静态通道数
+                
+                # 使用1x1卷积生成query/key/value
+                q = layers.Conv2D(channels//8, 1)(x)
+                k = layers.Conv2D(channels//8, 1)(x)
+                v = layers.Conv2D(channels, 1)(x)
+
+                # 使用动态reshape处理空间维度
+                q = tf.reshape(q, [batch_size, -1, channels//8])
+                k = tf.reshape(k, [batch_size, -1, channels//8])
+                v = tf.reshape(v, [batch_size, -1, channels])
+
+                # 计算注意力权重
+                attention = tf.matmul(q, k, transpose_b=True)
+                attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(channels//8, tf.float32)))
+
+                # 应用注意力到value
+                attended = tf.matmul(attention, v)
+                
+                # 恢复原始空间维度
+                attended = tf.reshape(attended, tf.shape(x))
+                return layers.Add()([x, attended])
+
+            def compute_output_shape(self, input_shape):
+                return input_shape  # 明确指定输出形状与输入相同
+        
+        combined = SelfAttentionBlock()(combined)
+        
         # 新增SE注意力模块
         se = layers.GlobalAveragePooling2D()(combined)
         se = layers.Dense(256//16, activation='relu')(se)
