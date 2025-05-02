@@ -27,7 +27,7 @@ import numpy as np
 
 # 参数设置
 BATCH_SIZE = 256
-EPOCHS = 1000
+EPOCHS = 1500
 INITIAL_LEARNING_RATE = 0.0001
 MIN_LEARNING_RATE = 0.00001
 SAVE_INTERVAL = 100
@@ -118,122 +118,21 @@ def decayed_learning_rate(epoch):
 # 修改点1：将train_step定义移到循环外部以避免重复追踪
 @tf.function
 def train_step(real_imgs, masked_imgs, epoch):
-    # 删除以下两行类型转换
-    # real_imgs = tf.cast(real_imgs, tf.float32)
-    # masked_imgs = tf.cast(masked_imgs, tf.float32)
-    
     # 每个epoch后更新学习率
     lr = decayed_learning_rate(epoch)
     generator.optimizer.learning_rate.assign(lr)
     discriminator.optimizer.learning_rate.assign(lr)
 
-    # 训练判别器
-    noise = tf.random.normal([BATCH_SIZE, 32, 32, 1])  # 噪声输入
-    # 修改点：直接使用生成器前向传播代替predict
-    fake_imgs = generator([masked_imgs, noise], training=True)
-    
-    # 打印判别器可训练变量信息用于调试
-    print(f"Discriminator trainable variables count: {len(discriminator.trainable_variables)}")
-    if len(discriminator.trainable_variables) == 0:
-        print("警告：判别器没有可训练变量！请检查模型结构")
-    
-    # 训练判别器前确保参数可训练
-    discriminator.trainable = True
+    # 确保判别器参数可训练
+    discriminator.trainable = True  # 关键修改：每次训练判别器前显式启用
     print("实际可训练变量数量:", len(discriminator.trainable_variables))  # 添加调试信息
-    
-    # 训练判别器，并对梯度进行裁剪
-    with tf.GradientTape() as tape:
-        # 使用tf.convert_to_tensor确保输入是张量
-        # 修改1：正确提取两个损失分量
-        d_real_validity, d_real_class = discriminator(tf.convert_to_tensor(real_imgs))
-        d_loss_real_validity = tf.keras.losses.binary_crossentropy(np.ones((BATCH_SIZE, 1)), d_real_validity)
-        d_loss_real_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_real_class)
-        d_loss_real = tf.reduce_mean(d_loss_real_validity + d_loss_real_class)
-
-        d_fake_validity, d_fake_class = discriminator(tf.convert_to_tensor(fake_imgs))
-        d_loss_fake_validity = tf.keras.losses.binary_crossentropy(np.zeros((BATCH_SIZE, 1)), d_fake_validity)
-        d_loss_fake_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_fake_class)
-        d_loss_fake = tf.reduce_mean(d_loss_fake_validity + d_loss_fake_class)
-
-        total_d_loss = d_loss_real + d_loss_fake
-            
-    grads = tape.gradient(total_d_loss, discriminator.trainable_variables)
-    # 修改2：添加梯度过滤，移除None值
-    grads = [g for g in grads if g is not None]
-    clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
-    discriminator.optimizer.apply_gradients(zip(clipped_grads, discriminator.trainable_variables))
-        
-    # 添加判别器变量存在性检查
-    if not discriminator.trainable_variables:
-        raise ValueError("判别器没有可训练变量，请检查模型结构！")
-            
-    # 训练生成器前冻结判别器（移动到生成器训练区块内）
-    discriminator.trainable = False
-    # 训练生成器（关键修改：直接计算损失而非使用train_on_batch）
-    with tf.GradientTape() as tape:
-        # 生成假图像（关键修改：直接使用前向传播）
-        fake_imgs = generator([masked_imgs, noise], training=True)
-        # 获取判别器输出
-        valid_pred, class_pred = discriminator(fake_imgs)
-        
-        # 计算两种损失分量
-        validity_loss = tf.keras.losses.binary_crossentropy(
-            tf.ones_like(valid_pred), valid_pred
-        )
-        class_loss = tf.keras.losses.sparse_categorical_crossentropy(
-            tf.zeros((BATCH_SIZE, 1)), class_pred
-        )
-        
-        # 合并损失
-        total_g_loss = tf.reduce_mean(validity_loss + class_loss)
-        
-    grads = tape.gradient(total_g_loss, generator.trainable_variables)
-    clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
-    generator.optimizer.apply_gradients(zip(clipped_grads, generator.trainable_variables))
-    
-    # 打印进度（修改损失显示方式）
-    tf.print(f"Epoch {epoch+1}/{EPOCHS} | D Loss Real: {d_loss_real} | D Loss Fake: {d_loss_fake} | G Loss: {total_g_loss}")
-
-# 修改点2：移除模型保存操作到函数外部
-# 删除以下代码：
-# if (epoch+1) % SAVE_INTERVAL == 0:
-#     generator.save_weights(f"models/generator_epoch_{epoch+1}.weights.h5")
-#     discriminator.save_weights(f"models/discriminator_epoch_{epoch+1}.weights.h5")
-
-# 在数据加载时添加预取和缓存优化
-idx = np.random.randint(0, x_train_real.shape[0], BATCH_SIZE)
-real_imgs = tf.data.Dataset.from_tensors(x_train_real[idx]).prefetch(tf.data.AUTOTUNE)
-masked_imgs = tf.data.Dataset.from_tensors(x_train_masked[idx]).prefetch(tf.data.AUTOTUNE)
-
-# 修改点3：重构训练循环（添加进度条和移除float32转换）
-def train_step(real_imgs, masked_imgs, epoch):
-    # 删除以下两行类型转换
-    # real_imgs = tf.cast(real_imgs, tf.float32)
-    # masked_imgs = tf.cast(masked_imgs, tf.float32)
-    
-    # 每个epoch后更新学习率
-    lr = decayed_learning_rate(epoch)
-    generator.optimizer.learning_rate.assign(lr)
-    discriminator.optimizer.learning_rate.assign(lr)
 
     # 训练判别器
     noise = tf.random.normal([BATCH_SIZE, 32, 32, 1])  # 噪声输入
-    # 修改点：直接使用生成器前向传播代替predict
     fake_imgs = generator([masked_imgs, noise], training=True)
-    
-    # 打印判别器可训练变量信息用于调试
-    print(f"Discriminator trainable variables count: {len(discriminator.trainable_variables)}")
-    if len(discriminator.trainable_variables) == 0:
-        print("警告：判别器没有可训练变量！请检查模型结构")
-    
-    # 训练判别器前确保参数可训练
-    discriminator.trainable = True
-    print("实际可训练变量数量:", len(discriminator.trainable_variables))  # 添加调试信息
-    
-    # 训练判别器，并对梯度进行裁剪
+
+    # 训练判别器
     with tf.GradientTape() as tape:
-        # 使用tf.convert_to_tensor确保输入是张量
-        # 修改1：正确提取两个损失分量
         d_real_validity, d_real_class = discriminator(tf.convert_to_tensor(real_imgs))
         d_loss_real_validity = tf.keras.losses.binary_crossentropy(np.ones((BATCH_SIZE, 1)), d_real_validity)
         d_loss_real_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_real_class)
@@ -241,26 +140,22 @@ def train_step(real_imgs, masked_imgs, epoch):
 
         d_fake_validity, d_fake_class = discriminator(tf.convert_to_tensor(fake_imgs))
         d_loss_fake_validity = tf.keras.losses.binary_crossentropy(
-            tf.zeros_like(d_fake_validity) + smooth_schedule(epoch)/2,  # 改为动态平滑系数
+            tf.zeros_like(d_fake_validity) + smooth_schedule(epoch)/2,
             d_fake_validity
         )
         d_loss_fake_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_fake_class)
         d_loss_fake = tf.reduce_mean(d_loss_fake_validity + d_loss_fake_class)
 
         total_d_loss = d_loss_real + d_loss_fake
-            
+
     grads = tape.gradient(total_d_loss, discriminator.trainable_variables)
-    # 修改2：添加梯度过滤，移除None值
     grads = [g for g in grads if g is not None]
     clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
     discriminator.optimizer.apply_gradients(zip(clipped_grads, discriminator.trainable_variables))
-        
-    # 添加判别器变量存在性检查
-    if not discriminator.trainable_variables:
-        raise ValueError("判别器没有可训练变量，请检查模型结构！")
-            
-    # 训练生成器前冻结判别器（移动到生成器训练区块内）
-    discriminator.trainable = False
+
+    # 训练生成器前冻结判别器
+    discriminator.trainable = False  # 冻结判别器
+
     # 训练生成器（关键修改：直接计算损失而非使用train_on_batch）
     with tf.GradientTape() as tape:
         # 生成假图像（关键修改：直接使用前向传播）
@@ -286,7 +181,98 @@ def train_step(real_imgs, masked_imgs, epoch):
     grads = tape.gradient(total_g_loss, generator.trainable_variables)
     clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
     generator.optimizer.apply_gradients(zip(clipped_grads, generator.trainable_variables))
+
+    # 训练生成器后恢复判别器可训练状态
+    # 注意：这个恢复操作应放在生成器训练结束后、下一个判别器训练前
+    # 可以考虑在下一次进入train_step之前由外部控制
+
+    # 打印进度（修改损失显示方式）
+    tf.print(f"Epoch {epoch+1}/{EPOCHS} | D Loss Real: {d_loss_real} | D Loss Fake: {d_loss_fake} | G Loss: {total_g_loss}")
     
+    # 返回生成器总损失用于监控
+    return total_g_loss
+
+# 修改点2：移除模型保存操作到函数外部
+# 删除以下代码：
+# if (epoch+1) % SAVE_INTERVAL == 0:
+#     generator.save_weights(f"models/generator_epoch_{epoch+1}.weights.h5")
+#     discriminator.save_weights(f"models/discriminator_epoch_{epoch+1}.weights.h5")
+
+# 在数据加载时添加预取和缓存优化
+idx = np.random.randint(0, x_train_real.shape[0], BATCH_SIZE)
+real_imgs = tf.data.Dataset.from_tensors(x_train_real[idx]).prefetch(tf.data.AUTOTUNE)
+masked_imgs = tf.data.Dataset.from_tensors(x_train_masked[idx]).prefetch(tf.data.AUTOTUNE)
+
+# 修改点3：重构训练循环（添加进度条和移除float32转换）
+def train_step(real_imgs, masked_imgs, epoch):
+    # 每个epoch后更新学习率
+    lr = decayed_learning_rate(epoch)
+    generator.optimizer.learning_rate.assign(lr)
+    discriminator.optimizer.learning_rate.assign(lr)
+
+    # 确保判别器参数可训练
+    discriminator.trainable = True  # 关键修改：每次训练判别器前显式启用
+    print("实际可训练变量数量:", len(discriminator.trainable_variables))  # 添加调试信息
+
+    # 训练判别器
+    noise = tf.random.normal([BATCH_SIZE, 32, 32, 1])  # 噪声输入
+    fake_imgs = generator([masked_imgs, noise], training=True)
+
+    # 训练判别器
+    with tf.GradientTape() as tape:
+        d_real_validity, d_real_class = discriminator(tf.convert_to_tensor(real_imgs))
+        d_loss_real_validity = tf.keras.losses.binary_crossentropy(np.ones((BATCH_SIZE, 1)), d_real_validity)
+        d_loss_real_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_real_class)
+        d_loss_real = tf.reduce_mean(d_loss_real_validity + d_loss_real_class)
+
+        d_fake_validity, d_fake_class = discriminator(tf.convert_to_tensor(fake_imgs))
+        d_loss_fake_validity = tf.keras.losses.binary_crossentropy(
+            tf.zeros_like(d_fake_validity) + smooth_schedule(epoch)/2,
+            d_fake_validity
+        )
+        d_loss_fake_class = tf.keras.losses.sparse_categorical_crossentropy(np.zeros((BATCH_SIZE, 1)), d_fake_class)
+        d_loss_fake = tf.reduce_mean(d_loss_fake_validity + d_loss_fake_class)
+
+        total_d_loss = d_loss_real + d_loss_fake
+
+    grads = tape.gradient(total_d_loss, discriminator.trainable_variables)
+    grads = [g for g in grads if g is not None]
+    clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
+    discriminator.optimizer.apply_gradients(zip(clipped_grads, discriminator.trainable_variables))
+
+    # 训练生成器前冻结判别器
+    discriminator.trainable = False  # 冻结判别器
+
+    # 训练生成器（关键修改：直接计算损失而非使用train_on_batch）
+    with tf.GradientTape() as tape:
+        # 生成假图像（关键修改：直接使用前向传播）
+        fake_imgs = generator([masked_imgs, noise], training=True)
+        # 获取判别器输出
+        valid_pred, class_pred = discriminator(fake_imgs)
+        
+        # 计算两种损失分量
+        validity_loss = tf.keras.losses.binary_crossentropy(
+            tf.ones_like(valid_pred) - smooth_schedule(epoch)/2,  # 真实标签也添加动态平滑
+            valid_pred
+        )
+        class_loss = tf.keras.losses.sparse_categorical_crossentropy(
+            tf.zeros((BATCH_SIZE, 1)), class_pred
+        )
+        
+        # 添加图像重建损失
+        reconstruction_loss = tf.reduce_mean(tf.abs(fake_imgs - real_imgs))
+        total_g_loss = tf.reduce_mean(
+            validity_loss + class_loss + 0.1 * reconstruction_loss  # 添加重建损失项
+        )
+        
+    grads = tape.gradient(total_g_loss, generator.trainable_variables)
+    clipped_grads = [tf.clip_by_norm(g, 1.0) for g in grads]
+    generator.optimizer.apply_gradients(zip(clipped_grads, generator.trainable_variables))
+
+    # 训练生成器后恢复判别器可训练状态
+    # 注意：这个恢复操作应放在生成器训练结束后、下一个判别器训练前
+    # 可以考虑在下一次进入train_step之前由外部控制
+
     # 打印进度（修改损失显示方式）
     tf.print(f"Epoch {epoch+1}/{EPOCHS} | D Loss Real: {d_loss_real} | D Loss Fake: {d_loss_fake} | G Loss: {total_g_loss}")
     
@@ -324,7 +310,7 @@ for epoch in tqdm(range(EPOCHS), desc='Training GAN', unit='epoch'):
     avg_g_loss = np.mean(epoch_g_losses)
     
     # 保存最佳模型（当生成器损失降低时）
-    if avg_g_loss < best_g_loss:
+    if avg_g_loss < best_g_loss and epoch > 800:
         os.makedirs("models", exist_ok=True)
         generator.save_weights("models/generator_best.weights.h5")
         discriminator.save_weights("models/discriminator_best.weights.h5")

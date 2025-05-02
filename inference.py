@@ -153,7 +153,7 @@ def repair_specific_image(generator, image=None, image_path=None):
 
 if __name__ == "__main__":
     # 路径到保存的权重文件（修改为正确的生成器路径）
-    generator_weight_path = "models_save/generator_epoch_1000.weights.h5"  # 将discriminator改为generator
+    generator_weight_path = "models/generator_epoch_1500.weights.h5"  # 将discriminator改为generator
     
     # 加载训练好的生成器
     generator = load_trained_generator(generator_weight_path)
@@ -162,7 +162,7 @@ if __name__ == "__main__":
     (_, _, _), (original_test, masked_test, labels_test) = load_cifar100_with_mask()
     
     # 选择测试集中第一张图片
-    test_idx = 3
+    test_idx = 0
     test_img = original_test[test_idx]
     
     # 修复数据集中的图片
