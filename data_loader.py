@@ -49,9 +49,3 @@ def load_cifar100_with_mask():
 
     # 修复返回值结构
     return (train_data, x_train_masked, train_labels), (test_data, x_test_masked, test_labels)
-
-# 在脚本中调用可视化函数
-if __name__ == "__main__":
-    (original_train, masked_train, labels_train), (original_test, masked_test, labels_test) = load_cifar100_with_mask()
-    show_samples(original_train[:5], masked_train[:5])
-

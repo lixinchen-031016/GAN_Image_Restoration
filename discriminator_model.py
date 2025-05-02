@@ -21,16 +21,24 @@ def build_discriminator():
     x = layers.LeakyReLU(negative_slope=0.2)(x)
     x = layers.Dropout(0.3)(x)
     
-    # 新增自注意力模块
+    # 新增卷积层
+    x = layers.Conv2D(512, (3, 3), strides=2, padding='same')(x)  # 新增下采样层
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.2)(x)
+    x = layers.Dropout(0.3)(x)
+    
+    # 改进的自注意力模块
     class SelfAttentionLayer(layers.Layer):
-        def __init__(self, **kwargs):
+        def __init__(self, reduction_ratio=8, **kwargs):
             super().__init__(**kwargs)
+            self.reduction_ratio = reduction_ratio
             
         def build(self, input_shape):
             self.channels = input_shape[-1]
-            self.q_conv = layers.Conv2D(self.channels//8, 1)
-            self.k_conv = layers.Conv2D(self.channels//8, 1)
+            self.q_conv = layers.Conv2D(self.channels//self.reduction_ratio, 1)
+            self.k_conv = layers.Conv2D(self.channels//self.reduction_ratio, 1)
             self.v_conv = layers.Conv2D(self.channels, 1)
+            self.gamma = tf.Variable(0.0, trainable=True)  # 可学习的缩放参数
             self.add_layer = layers.Add()
             super().build(input_shape)
             
@@ -42,34 +50,48 @@ def build_discriminator():
             v = self.v_conv(x)
             
             # 使用动态reshape处理空间维度
-            q = tf.reshape(q, [batch_size, -1, self.channels//8])
-            k = tf.reshape(k, [batch_size, -1, self.channels//8])
+            q = tf.reshape(q, [batch_size, -1, self.channels//self.reduction_ratio])
+            k = tf.reshape(k, [batch_size, -1, self.channels//self.reduction_ratio])
             v = tf.reshape(v, [batch_size, -1, self.channels])
             
             attention = tf.matmul(q, k, transpose_b=True)
-            attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(self.channels//8, tf.float32)))
+            attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(self.channels//self.reduction_ratio, tf.float32)))
             
             attended = tf.matmul(attention, v)
             attended = tf.reshape(attended, tf.shape(x))
-            return self.add_layer([x, attended])
+            return (1 - self.gamma) * x + self.gamma * attended  # 可学习的残差连接
         
         def compute_output_shape(self, input_shape):
             return input_shape
     
-    x = SelfAttentionLayer()(x)
+    x = SelfAttentionLayer(reduction_ratio=4)(x)  # 增加注意力模块的分辨率
     
-    # 添加全局特征提取
-    global_features = layers.GlobalAveragePooling2D()(x)
+    # 添加更深层的特征提取
+    x = layers.Conv2D(512, (3, 3), padding='same')(x)
+    x = layers.BatchNormalization()(x)
+    x = layers.LeakyReLU(negative_slope=0.2)(x)
     
-    global_features = layers.Flatten()(global_features)
+    # 修改空间金字塔池化层配置（原pool_size=4会导致负维度）
+    pool1 = layers.GlobalAveragePooling2D()(x)
+    pool2 = layers.AveragePooling2D(pool_size=(2, 2))(x)
+    pool3 = layers.AveragePooling2D(pool_size=(1, 1))(x)  # 修改为1x1池化
+    
+    # 多尺度特征融合
+    pool2 = layers.Flatten()(pool2)
+    pool3 = layers.Flatten()(pool3)
+    global_features = layers.Concatenate()([pool1, pool2, pool3])
 
     # 真假辨别分支
-    validity_branch = layers.Dense(128)(global_features)  # 直接基于 global_features
+    validity_branch = layers.Dense(256)(global_features)  # 增加神经元数量
+    validity_branch = layers.LeakyReLU(negative_slope=0.2)(validity_branch)
+    validity_branch = layers.Dense(128)(validity_branch)  # 新增层
     validity_branch = layers.LeakyReLU(negative_slope=0.2)(validity_branch)
     validity = layers.Dense(1, activation='sigmoid', name='validity')(validity_branch)
     
     # 分类分支
-    class_branch = layers.Dense(256)(global_features)
+    class_branch = layers.Dense(512)(global_features)  # 增加神经元数量
+    class_branch = layers.LeakyReLU(negative_slope=0.2)(class_branch)
+    class_branch = layers.Dense(256)(class_branch)  # 新增层
     class_branch = layers.LeakyReLU(negative_slope=0.2)(class_branch)
     # 将普通Dropout改为空间Dropout（需保持4D输入）
     class_branch = layers.Reshape((1, 1, 256))(class_branch)  # 新增：将特征转换为4D张量
