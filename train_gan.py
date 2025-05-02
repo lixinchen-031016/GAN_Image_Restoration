@@ -121,8 +121,11 @@ def train_step(real_imgs, masked_imgs, epoch):
     # 每个epoch后更新学习率
     lr = decayed_learning_rate(epoch)
     generator.optimizer.learning_rate.assign(lr)
-    discriminator.optimizer.learning_rate.assign(lr)
-
+    discriminator.optimizer.learning_rate.assign(lr * 0.5)  # 保持判别器学习率为生成器的一半
+    
+    # 新增：输出可训练变量数量
+    print(f"[训练状态] 生成器可训练变量数量: {len(generator.trainable_variables)}, 判别器可训练变量数量: {len(discriminator.trainable_variables)}")
+    
     # 确保判别器参数可训练
     discriminator.trainable = True  # 关键修改：每次训练判别器前显式启用
     print("实际可训练变量数量:", len(discriminator.trainable_variables))  # 添加调试信息
