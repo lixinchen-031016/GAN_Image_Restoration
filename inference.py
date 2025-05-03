@@ -5,6 +5,7 @@ from generator_model import build_generator
 import os
 # 新增导入语句
 from data_loader import load_cifar100_with_mask
+from skimage.metrics import peak_signal_noise_ratio as psnr, structural_similarity as ssim  # 新增导入
 
 def load_trained_generator(weight_path):
     """加载生成器权重"""
@@ -33,7 +34,7 @@ def add_random_mask(img_array, mask_size=8):
     masked_array[top:top+mask_size, left:left+mask_size, :] = 0
     return masked_array, None  # 不再返回mask矩阵
 
-def show_repair_result(original, masked, repaired):
+def show_repair_result(original, masked, repaired, psnr_value, ssim_value):  # 修改函数签名
     """可视化修复效果"""
     plt.figure(figsize=(15, 5))
 
@@ -51,7 +52,7 @@ def show_repair_result(original, masked, repaired):
 
     # 修复结果
     plt.subplot(1, 3, 3)
-    plt.title("Repaired Image")
+    plt.title(f"Repaired Image\nPSNR: {psnr_value:.2f} dB\nSSIM: {ssim_value:.4f}")  # 添加指标显示
     plt.imshow(repaired)
     plt.axis('off')
 
@@ -153,7 +154,7 @@ def repair_specific_image(generator, image=None, image_path=None):
 
 if __name__ == "__main__":
     # 路径到保存的权重文件（修改为正确的生成器路径）
-    generator_weight_path = "models/generator_epoch_1500.weights.h5"  # 将discriminator改为generator
+    generator_weight_path = "models/generator_epoch_1000.weights.h5"  # 将discriminator改为generator
     
     # 加载训练好的生成器
     generator = load_trained_generator(generator_weight_path)
@@ -168,8 +169,13 @@ if __name__ == "__main__":
     # 修复数据集中的图片
     original, masked, repaired = repair_specific_image(generator, image=test_img)
     
+    # 计算PSNR和SSIM
+    original_uint8 = (original * 255).astype(np.uint8)  # 转换为uint8格式
+    psnr_value = psnr(original_uint8, repaired)  # 计算PSNR
+    ssim_value = ssim(original_uint8, repaired, multichannel=True, channel_axis=2)  # 计算SSIM
+    
     # 展示和保存结果
-    show_repair_result(original, masked, repaired)
+    show_repair_result(original, masked, repaired, psnr_value, ssim_value)  # 传递指标参数
 
     # 确保结果目录存在
     result_dir = "/Users/lixinchen/PycharmProjects/cnn_gan_test/results"
