@@ -1,5 +1,3 @@
-import tensorflow as tf
-from tensorflow.keras.datasets import cifar100
 import numpy as np
 
 def load_cifar100_with_mask():

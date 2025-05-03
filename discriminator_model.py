@@ -1,5 +1,5 @@
 import tensorflow as tf
-from tensorflow.keras import layers, Model
+from keras import layers, Model
 
 def build_discriminator():
     """
