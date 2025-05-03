@@ -116,8 +116,8 @@ def decayed_learning_rate(epoch):
     return MIN_LEARNING_RATE + (INITIAL_LEARNING_RATE - MIN_LEARNING_RATE) * cosine_decay
 
 # 修改点1：将train_step定义移到循环外部以避免重复追踪
-@tf.function
-def train_step(real_imgs, masked_imgs, epoch):
+#@tf.function
+'''def train_step(real_imgs, masked_imgs, epoch):
     # 每个epoch后更新学习率
     lr = decayed_learning_rate(epoch)
     generator.optimizer.learning_rate.assign(lr)
@@ -205,6 +205,7 @@ def train_step(real_imgs, masked_imgs, epoch):
 idx = np.random.randint(0, x_train_real.shape[0], BATCH_SIZE)
 real_imgs = tf.data.Dataset.from_tensors(x_train_real[idx]).prefetch(tf.data.AUTOTUNE)
 masked_imgs = tf.data.Dataset.from_tensors(x_train_masked[idx]).prefetch(tf.data.AUTOTUNE)
+'''
 
 # 修改点3：重构训练循环（添加进度条和移除float32转换）
 def train_step(real_imgs, masked_imgs, epoch):
@@ -215,7 +216,7 @@ def train_step(real_imgs, masked_imgs, epoch):
 
     # 确保判别器参数可训练
     discriminator.trainable = True  # 关键修改：每次训练判别器前显式启用
-    print("实际可训练变量数量:", len(discriminator.trainable_variables))  # 添加调试信息
+    print(f"判别器可训练变量数量: {len(discriminator.trainable_variables)}")# 添加调试信息
 
     # 训练判别器
     noise = tf.random.normal([BATCH_SIZE, 32, 32, 1])  # 噪声输入
@@ -278,6 +279,8 @@ def train_step(real_imgs, masked_imgs, epoch):
 
     # 打印进度（修改损失显示方式）
     tf.print(f"Epoch {epoch+1}/{EPOCHS} | D Loss Real: {d_loss_real} | D Loss Fake: {d_loss_fake} | G Loss: {total_g_loss}")
+    print(
+        f"[训练状态] 生成器可训练变量数量: {len(generator.trainable_variables)}")
     
     # 返回生成器总损失用于监控
     return total_g_loss
