@@ -2,93 +2,109 @@ import tensorflow as tf
 from keras import layers, Model
 
 def build_generator():
-    """改进的生成器结构，用于图像修补"""
-    inputs = tf.keras.Input(shape=(32, 32, 3))  # 输入带遮罩的图像
-    masks = tf.keras.Input(shape=(32, 32, 1))   # 输入遮罩位置
+    """
+    改进的生成器结构，采用多尺度特征融合和注意力机制，包含：
+    1. 特征提取分支（含多级下采样）
+    2. 遮罩处理分支
+    3. 特征融合与空洞卷积
+    4. 注意力增强模块
+    5. 多阶段上采样重构
+    """
+    # 输入层：带遮罩的32x32 RGB图像
+    inputs = tf.keras.Input(shape=(32, 32, 3))  # 主输入维度[None,32,32,3]
+    masks = tf.keras.Input(shape=(32, 32, 1))   # 遮罩输入维度[None,32,32,1]
 
-    # 特征提取分支
+    # 特征提取分支（逐步下采样）
+    # 初始卷积提取基础特征
     x = layers.Conv2D(64, (5, 5), padding='same')(inputs)
     x = layers.BatchNormalization()(x)
-    x = layers.Activation('swish')(x)  # 使用Swish激活函数
+    x = layers.Activation('swish')(x)  # Swish激活函数提升非线性表达能力
 
-    # 添加残差块
+    # 保存初始特征用于后续残差连接
     x_residual = x
 
-    # 增加特征提取深度
+    # 增加特征提取深度（共3次下采样）
+    # 第1下采样：128通道，3x3卷积，输出尺寸16x16
     x = layers.Conv2D(128, (3, 3), strides=2, padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 新增残差块1
-    residual = layers.Conv2D(128, (1, 1), padding='same')(x)  # 匹配通道数
+    # 残差块1
+    residual = layers.Conv2D(128, (1, 1), padding='same')(x)  # 1x1卷积匹配通道数
     x = layers.Conv2D(128, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
-    x = layers.add([x, residual])  # 残差连接
+    x = layers.add([x, residual])  # 残差连接保留细节信息
     
+    # 第2下采样：256通道，3x3卷积，输出尺寸8x8
     x = layers.Conv2D(256, (3, 3), strides=2, padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 新增残差块2
-    residual = layers.Conv2D(256, (1, 1), padding='same')(x)  # 匹配通道数
+    # 残差块2
+    residual = layers.Conv2D(256, (1, 1), padding='same')(x)  # 通道匹配
     x = layers.Conv2D(256, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
-    x = layers.add([x, residual])  # 残差连接
+    x = layers.add([x, residual])  # 残差连接提升梯度流动
     
-    # 新增第三层下采样
+    # 第3下采样：512通道，3x3卷积，输出尺寸4x4
     x = layers.Conv2D(512, (3, 3), strides=2, padding='same')(x)  # 新增下采样层
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 新增残差块3
-    residual = layers.Conv2D(512, (1, 1), padding='same')(x)  # 匹配通道数
+    # 残差块3
+    residual = layers.Conv2D(512, (1, 1), padding='same')(x)  # 通道匹配
     x = layers.Conv2D(512, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
-    x = layers.add([x, residual])  # 残差连接
+    x = layers.add([x, residual])  # 残差连接保留深层特征
     
-    # 修改遮罩路径：增加下采样以匹配特征图尺寸
-    m = layers.Conv2D(64, (5, 5), padding='same')(masks)
+    # 遮罩路径处理（与特征路径同步下采样）
+    # 初始卷积处理遮罩信息
+    m = layers.Conv2D(64, (5, 5), padding='same')(masks)  # 初始卷积
     m = layers.BatchNormalization()(m)
     m = layers.Activation('swish')(m)
 
-    # 添加下采样操作
-    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)  # 第一次下采样到16x16
+    # 第1下采样到16x16
+    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)
     m = layers.BatchNormalization()(m)
     m = layers.Activation('swish')(m)
 
-    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)  # 第二次下采样到8x8
+    # 第2下采样到8x8
+    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)
     m = layers.BatchNormalization()(m)
     m = layers.Activation('swish')(m)
     
-    # 新增第三次下采样到4x4
-    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)  # 新增下采样层
+    # 新增第3次下采样到4x4
+    m = layers.Conv2D(64, (3, 3), strides=2, padding='same')(m)  # 保持空间尺寸一致
     m = layers.BatchNormalization()(m)
     m = layers.Activation('swish')(m)
 
-    # 融合两种特征
-    combined = layers.Concatenate()([x, m])  # 现在 x 和 m 的尺寸应该都是(None, 8, 8, ...) 
+    # 特征融合（通道拼接）
+    # 合并特征和遮罩信息，维度[None,4,4,512+64=576]
+    combined = layers.Concatenate()([x, m])  
 
-    # 使用空洞卷积扩大感受野
+    # 空洞卷积扩大感受野（多尺度特征提取）
     for rate in [2, 4, 8]:
-        combined = layers.Conv2D(512, (3, 3), padding='same', dilation_rate=rate)(combined)  # 增加通道数
+        # 不同空洞率的卷积层捕捉多尺度上下文
+        combined = layers.Conv2D(512, (3, 3), padding='same', dilation_rate=rate)(combined)
         combined = layers.BatchNormalization()(combined)
         combined = layers.Activation('swish')(combined)
         
-        # 新增自注意力模块
+        # 自注意力模块增强特征交互
         class SelfAttentionBlock(layers.Layer):
+            """空间自注意力模块，增强特征图内部关系建模"""
             def call(self, x):
                 batch_size = tf.shape(x)[0]
                 channels = x.shape[-1]  # 使用静态通道数
                 
-                # 使用1x1卷积生成query/key/value
+                # 生成Q/K/V三组特征
                 q = layers.Conv2D(channels//8, 1)(x)
                 k = layers.Conv2D(channels//8, 1)(x)
                 v = layers.Conv2D(channels, 1)(x)
 
-                # 使用动态reshape处理空间维度
+                # 动态reshape处理空间维度
                 q = tf.reshape(q, [batch_size, -1, channels//8])
                 k = tf.reshape(k, [batch_size, -1, channels//8])
                 v = tf.reshape(v, [batch_size, -1, channels])
@@ -102,73 +118,79 @@ def build_generator():
                 
                 # 恢复原始空间维度
                 attended = tf.reshape(attended, tf.shape(x))
-                return layers.Add()([x, attended])
+                return layers.Add()([x, attended])  # 残差连接保留原始信息
 
             def compute_output_shape(self, input_shape):
                 return input_shape  # 明确指定输出形状与输入相同
         
         combined = SelfAttentionBlock()(combined)
         
-        # 新增SE注意力模块
-        se = layers.GlobalAveragePooling2D()(combined)
-        se = layers.Dense(512//16, activation='relu')(se)  # 增加通道数
-        se = layers.Dense(512, activation='sigmoid')(se)
-        combined = layers.multiply([combined, se])
+        # SE注意力模块（通道注意力）
+        se = layers.GlobalAveragePooling2D()(combined)  # 压缩空间维度
+        se = layers.Dense(512//16, activation='relu')(se)  # 降维到32维
+        se = layers.Dense(512, activation='sigmoid')(se)  # 恢复通道维度
+        combined = layers.multiply([combined, se])  # 通道加权：[None,4,4,512] .* [None,512]
     
-    # 新增残差注意力模块
+    # 残差注意力模块（结合局部和全局特征）
     class ResidualAttentionBlock(layers.Layer):
         def __init__(self, channels):
             super().__init__()
             self.channels = channels
             
         def build(self, input_shape):
+            # 卷积堆叠
             self.conv1 = layers.Conv2D(self.channels, (3, 3), padding='same')
             self.bn1 = layers.BatchNormalization()
             self.conv2 = layers.Conv2D(self.channels, (3, 3), padding='same')
             self.bn2 = layers.BatchNormalization()
+            # 注意力增强
             self.attention = SelfAttentionBlock()
             super().build(input_shape)
             
         def call(self, x):
             residual = x
+            # 特征变换
             x = self.conv1(x)
             x = self.bn1(x)
             x = layers.Activation('swish')(x)
             x = self.conv2(x)
             x = self.bn2(x)
             x = layers.Activation('swish')(x)
+            # 注意力增强
             x = self.attention(x)
-            return layers.Add()([x, residual])
+            return layers.Add()([x, residual])  # 残差连接保留原始信息
     
     # 添加多个残差注意力模块
     for _ in range(2):  # 添加两个残差注意力模块
         combined = ResidualAttentionBlock(512)(combined)
     
-    # 上采样层重构图像（替换转置卷积为UpSampling+普通卷积组合）
-    # 修改点1：替换第一次上采样
-    x = layers.UpSampling2D(size=(2, 2))(combined)  # 替代Conv2DTranspose
-    x = layers.Conv2D(512, (3, 3), padding='same')(x)  # 增加通道数
+    # 上采样层重构图像（使用UpSampling+普通卷积替代转置卷积）
+    # 第1上采样：4x4 → 8x8
+    x = layers.UpSampling2D(size=(2, 2))(combined)
+    x = layers.Conv2D(512, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 修改点2：替换第二次上采样
-    x = layers.UpSampling2D(size=(2, 2))(x)  # 替代Conv2DTranspose
-    x = layers.Conv2D(256, (3, 3), padding='same')(x)  # 增加通道数
+    # 第2上采样：8x8 → 16x16
+    x = layers.UpSampling2D(size=(2, 2))(x)
+    x = layers.Conv2D(256, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 新增第三次上采样
-    x = layers.UpSampling2D(size=(2, 2))(x)  # 新增上采样层
+    # 第3上采样：16x16 → 32x32
+    x = layers.UpSampling2D(size=(2, 2))(x)
     x = layers.Conv2D(128, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
     # 残差连接融合
-    x = layers.Cropping2D(cropping=((0, 0), (0, 0)))(x_residual)  # 调整尺寸匹配
-    x = layers.Concatenate()([x, x_residual])
+    # 调整尺寸匹配
+    x = layers.Cropping2D(cropping=((0, 0), (0, 0)))(x_residual)  # 不改变尺寸
+    # 融合局部细节和全局特征：[None,32,32,128] + [None,32,32,64]
+    x = layers.Concatenate()([x, x_residual])  
     
-    # 精细化输出
-    x = layers.Conv2D(256, (3, 3), padding='same')(x)  # 增加通道数
+    # 精细化输出处理
+    x = layers.Conv2D(256, (3, 3), padding='same')(x)
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
@@ -176,7 +198,8 @@ def build_generator():
     x = layers.BatchNormalization()(x)
     x = layers.Activation('swish')(x)
     
-    # 输出层
-    outputs = layers.Conv2D(3, (1, 1), padding='same', activation='sigmoid')(x)  # 使用1x1卷积进行特征组合
+    # 输出层（1x1卷积进行特征组合）
+    # 使用sigmoid将像素值限制在0-1范围
+    outputs = layers.Conv2D(3, (1, 1), padding='same', activation='sigmoid')(x)  # 输出修复后的图像
     
     return Model(inputs=[inputs, masks], outputs=outputs)
