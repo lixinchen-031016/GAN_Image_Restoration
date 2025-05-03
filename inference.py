@@ -22,18 +22,6 @@ def repair_image(generator, masked_img):
     repaired_img = generator.predict([np.expand_dims(masked_img, axis=0), noise])
     return np.squeeze(repaired_img, axis=0)  # 移除batch维度
 
-def add_random_mask(img_array, mask_size=8):
-    """生成更合理的遮罩并应用到图像"""
-    # 创建随机遮罩位置
-    top = np.random.randint(0, img_array.shape[0] - mask_size)
-    left = np.random.randint(0, img_array.shape[1] - mask_size)
-    
-    # 删除渐变遮罩逻辑，保持与训练数据一致的硬边界遮罩
-    # 创建全零遮罩区域（三通道）
-    masked_array = img_array.copy()
-    masked_array[top:top+mask_size, left:left+mask_size, :] = 0
-    return masked_array, None  # 不再返回mask矩阵
-
 def show_repair_result(original, masked, repaired, psnr_value, ssim_value):  # 修改函数签名
     """可视化修复效果"""
     plt.figure(figsize=(15, 5))
@@ -74,18 +62,17 @@ def split_image_into_patches(image, patch_size=(32, 32)):
     
     return patches, (h, w, c)
 
-def process_and_stitch(patches, generator):
+def process_and_stitch(patches, mask_patches, generator):  # 新增mask_patches参数
     """添加重叠区域处理以减少拼接痕迹"""
     processed_patches = []
     
-    for patch in patches:
+    for patch, mask_patch in zip(patches, mask_patches):  # 使用传入的mask patch
         # 删除固定种子设置，允许不同patch使用不同噪声
         # 修改噪声生成方式，使其与训练分布一致
         noise = np.random.normal(0, 1, (1, 32, 32, 1))  # 每次生成新噪声
         
-        # 对每个小块应用遮罩并修复
-        masked_patch, _ = add_random_mask(patch)
-        repaired_patch = generator.predict([np.expand_dims(masked_patch, axis=0), noise])
+        # 直接使用传入的mask patch
+        repaired_patch = generator.predict([np.expand_dims(mask_patch, axis=0), noise])
         processed_patches.append(np.squeeze(repaired_patch, axis=0))
     
     # 获取第一个小块的尺寸
@@ -113,10 +100,12 @@ def process_and_stitch(patches, generator):
     # 取平均值得到最终图像
     return output_img / count
 
-def repair_specific_image(generator, image=None, image_path=None):
+def repair_specific_image(generator, image=None, image_path=None, mask_image=None):  # 新增mask_image参数
     """修复指定图片，支持直接传入图像数组或图片路径"""
     if image is None and image_path is None:
         raise ValueError("必须提供图像数组或图片路径")
+    if mask_image is None:  # 新增遮罩图像校验
+        raise ValueError("必须提供遮罩图像")
         
     if image is None:
         # 读取图片
@@ -133,9 +122,10 @@ def repair_specific_image(generator, image=None, image_path=None):
     
     # 分割图像为32x32的小块
     patches, original_shape = split_image_into_patches(img)
+    mask_patches, _ = split_image_into_patches(mask_image)  # 分割遮罩图像
     
     # 处理每个小块并拼接结果
-    repaired_img = process_and_stitch(patches, generator)
+    repaired_img = process_and_stitch(patches, mask_patches, generator)
     
     # 获取原始图像尺寸
     orig_h, orig_w = original_shape[:2]
@@ -146,15 +136,13 @@ def repair_specific_image(generator, image=None, image_path=None):
     # 将修复后的图像从[0,1]范围转换为[0,255]并转为8位整数
     repaired_img = (repaired_img * 255).astype(np.uint8)
     
-    # 生成完整遮罩图像（对整图应用一次遮罩）
-    masked_img, _ = add_random_mask(img)
-    
-    # 返回原始图像、遮罩图像和修复后的图像
+    # 返回原始图像、遮罩图像和修复后的图像（直接使用传入的遮罩图像）
+    masked_img = mask_image[:orig_h, :orig_w, :]  # 使用传入遮罩的裁剪版本
     return img, masked_img, repaired_img
 
 if __name__ == "__main__":
     # 路径到保存的权重文件（修改为正确的生成器路径）
-    generator_weight_path = "models/generator_epoch_1000.weights.h5"  # 将discriminator改为generator
+    generator_weight_path = "models/generator_epoch_1500.weights.h5"  # 将discriminator改为generator
     
     # 加载训练好的生成器
     generator = load_trained_generator(generator_weight_path)
@@ -165,14 +153,16 @@ if __name__ == "__main__":
     # 选择测试集中第一张图片
     test_idx = 0
     test_img = original_test[test_idx]
+    test_mask = masked_test[test_idx]  # 获取对应的遮罩图像
     
-    # 修复数据集中的图片
-    original, masked, repaired = repair_specific_image(generator, image=test_img)
+    # 修复数据集中的图片（新增传入遮罩图像）
+    original, masked, repaired = repair_specific_image(generator, image=test_img, mask_image=test_mask)
     
     # 计算PSNR和SSIM
     original_uint8 = (original * 255).astype(np.uint8)  # 转换为uint8格式
     psnr_value = psnr(original_uint8, repaired)  # 计算PSNR
     ssim_value = ssim(original_uint8, repaired, multichannel=True, channel_axis=2)  # 计算SSIM
+    print(f"PSNR: {psnr_value:.2f} dB\nSSIM: {ssim_value:.4f}")
     
     # 展示和保存结果
     show_repair_result(original, masked, repaired, psnr_value, ssim_value)  # 传递指标参数
