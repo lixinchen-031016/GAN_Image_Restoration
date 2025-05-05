@@ -85,52 +85,6 @@ def build_generator():
     # 合并特征和遮罩信息，维度[None,4,4,512+64=576]
     combined = layers.Concatenate()([x, m])  
 
-    # 空洞卷积扩大感受野（多尺度特征提取）
-    for rate in [2, 4, 8]:
-        # 不同空洞率的卷积层捕捉多尺度上下文
-        combined = layers.Conv2D(512, (3, 3), padding='same', dilation_rate=rate)(combined)
-        combined = layers.BatchNormalization()(combined)
-        combined = layers.Activation('swish')(combined)
-        
-        # 自注意力模块增强特征交互
-        class SelfAttentionBlock(layers.Layer):
-            """空间自注意力模块，增强特征图内部关系建模"""
-            def call(self, x):
-                batch_size = tf.shape(x)[0]
-                channels = x.shape[-1]  # 使用静态通道数
-                
-                # 生成Q/K/V三组特征
-                q = layers.Conv2D(channels//8, 1)(x)
-                k = layers.Conv2D(channels//8, 1)(x)
-                v = layers.Conv2D(channels, 1)(x)
-
-                # 动态reshape处理空间维度
-                q = tf.reshape(q, [batch_size, -1, channels//8])
-                k = tf.reshape(k, [batch_size, -1, channels//8])
-                v = tf.reshape(v, [batch_size, -1, channels])
-
-                # 计算注意力权重
-                attention = tf.matmul(q, k, transpose_b=True)
-                attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(channels//8, tf.float32)))
-
-                # 应用注意力到value
-                attended = tf.matmul(attention, v)
-                
-                # 恢复原始空间维度
-                attended = tf.reshape(attended, tf.shape(x))
-                return layers.Add()([x, attended])  # 残差连接保留原始信息
-
-            def compute_output_shape(self, input_shape):
-                return input_shape  # 明确指定输出形状与输入相同
-        
-        combined = SelfAttentionBlock()(combined)
-        
-        # SE注意力模块（通道注意力）
-        se = layers.GlobalAveragePooling2D()(combined)  # 压缩空间维度
-        se = layers.Dense(512//16, activation='relu')(se)  # 降维到32维
-        se = layers.Dense(512, activation='sigmoid')(se)  # 恢复通道维度
-        combined = layers.multiply([combined, se])  # 通道加权：[None,4,4,512] .* [None,512]
-    
     # 残差注意力模块（结合局部和全局特征）
     class ResidualAttentionBlock(layers.Layer):
         def __init__(self, channels):
@@ -160,9 +114,30 @@ def build_generator():
             x = self.attention(x)
             return layers.Add()([x, residual])  # 残差连接保留原始信息
     
-    # 添加多个残差注意力模块
-    for _ in range(2):  # 添加两个残差注意力模块
-        combined = ResidualAttentionBlock(512)(combined)
+    # 添加多个残差注意力模块（从2个增加到3个）
+    for _ in range(3):  # 增加残差注意力模块数量
+        combined = ResidualAttentionBlock(combined.shape[-1])(combined)  # 使用实际通道数替换固定值 512
+        
+    # 空洞卷积扩大感受野（多尺度特征提取）
+    for rate in [2, 4, 8]:
+        # 第一次卷积
+        combined = layers.Conv2D(512, (3, 3), padding='same', dilation_rate=rate)(combined)
+        combined = layers.BatchNormalization()(combined)
+        combined = layers.Activation('swish')(combined)
+
+        # 第二次卷积（新增）
+        combined = layers.Conv2D(512, (3, 3), padding='same', dilation_rate=rate)(combined)
+        combined = layers.BatchNormalization()(combined)
+        combined = layers.Activation('swish')(combined)
+
+        # 自注意力模块增强特征交互
+        combined = SelfAttentionBlock()(combined)
+        
+        # SE注意力模块（通道注意力）
+        se = layers.GlobalAveragePooling2D()(combined)  # 压缩空间维度
+        se = layers.Dense(512//16, activation='relu')(se)  # 降维到32维
+        se = layers.Dense(512, activation='sigmoid')(se)  # 恢复通道维度
+        combined = layers.multiply([combined, se])  # 通道加权：[None,4,4,512] .* [None,512]
     
     # 上采样层重构图像（使用UpSampling+普通卷积替代转置卷积）
     # 第1上采样：4x4 → 8x8
@@ -203,3 +178,30 @@ def build_generator():
     outputs = layers.Conv2D(3, (1, 1), padding='same', activation='sigmoid')(x)  # 输出修复后的图像
     
     return Model(inputs=[inputs, masks], outputs=outputs)
+
+# 将SelfAttentionBlock类定义提前至全局作用域
+class SelfAttentionBlock(layers.Layer):
+    def call(self, x):
+        batch_size = tf.shape(x)[0]
+        channels = x.shape[-1]
+
+        q = layers.Conv2D(channels//8, 1)(x)  # 确保是可训练卷积层
+        k = layers.Conv2D(channels//8, 1)(x)
+        v = layers.Conv2D(channels, 1)(x)
+
+        # 动态reshape处理空间维度
+        q = tf.reshape(q, [batch_size, -1, channels//8])
+        k = tf.reshape(k, [batch_size, -1, channels//8])
+        v = tf.reshape(v, [batch_size, -1, channels])
+
+        # 计算注意力权重
+        attention = tf.matmul(q, k, transpose_b=True)
+        attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(channels//8, tf.float32)))
+
+        # 应用注意力到value
+        attended = tf.matmul(attention, v)
+        attended = tf.reshape(attended, tf.shape(x))
+        return layers.Add()([x, attended])  # 残差连接保留原始信息
+
+    def compute_output_shape(self, input_shape):
+        return input_shape  # 明确指定输出形状与输入相同
