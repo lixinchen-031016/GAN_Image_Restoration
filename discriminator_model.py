@@ -39,52 +39,57 @@ def build_discriminator():
     
     # 改进的自注意力模块（通道缩减比改为4）
     class SelfAttentionLayer(layers.Layer):
-        """自注意力机制模块，增强长距离依赖建模能力
-        参数:
-            reduction_ratio: 通道压缩比例，控制计算复杂度
-        """
+        """自注意力机制模块，增强长距离依赖建模能力"""
         def __init__(self, reduction_ratio=8, **kwargs):
             super().__init__(**kwargs)
             self.reduction_ratio = reduction_ratio
-            
+
         def build(self, input_shape):
-            """初始化Q/K/V变换层"""
             self.channels = input_shape[-1]
-            # 1x1卷积降低通道数，减少计算量
-            self.q_conv = layers.Conv2D(self.channels//self.reduction_ratio, 1)
-            self.k_conv = layers.Conv2D(self.channels//self.reduction_ratio, 1)
+            # 显式定义并构建子层
+            self.q_conv = layers.Conv2D(self.channels // self.reduction_ratio, 1)
+            self.k_conv = layers.Conv2D(self.channels // self.reduction_ratio, 1)
             self.v_conv = layers.Conv2D(self.channels, 1)
-            # 可学习的缩放参数，初始为0，保证训练稳定性
-            self.gamma = tf.Variable(0.0, trainable=True)  
+
+            self.gamma = tf.Variable(0.0, trainable=True)
             self.add_layer = layers.Add()
+
+            # 构建所有子层
+            self.q_conv.build(input_shape)
+            self.k_conv.build(input_shape)
+            self.v_conv.build(input_shape)
+
             super().build(input_shape)
-            
+
         def call(self, x):
-            """前向传播计算注意力机制"""
             batch_size = tf.shape(x)[0]
-            
-            # 生成查询/键/值向量
-            q = self.q_conv(x)  # [None, H, W, C/r]
-            k = self.k_conv(x)  # [None, H, W, C/r]
-            v = self.v_conv(x)  # [None, H, W, C]
-            
-            # 动态reshape处理空间维度
-            q = tf.reshape(q, [batch_size, -1, self.channels//self.reduction_ratio])
-            k = tf.reshape(k, [batch_size, -1, self.channels//self.reduction_ratio])
+
+            q = self.q_conv(x)
+            k = self.k_conv(x)
+            v = self.v_conv(x)
+
+            q = tf.reshape(q, [batch_size, -1, self.channels // self.reduction_ratio])
+            k = tf.reshape(k, [batch_size, -1, self.channels // self.reduction_ratio])
             v = tf.reshape(v, [batch_size, -1, self.channels])
-            
-            # 计算注意力权重
-            attention = tf.matmul(q, k, transpose_b=True)  # [N, HW, HW]
-            # 使用温度系数调节分布陡峭程度
-            attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(self.channels//self.reduction_ratio, tf.float32)))
-            
-            # 应用注意力到值向量
-            attended = tf.matmul(attention, v)  # [N, HW, C]
-            attended = tf.reshape(attended, tf.shape(x))  # [N, H, W, C]
-            return (1 - self.gamma) * x + self.gamma * attended  # 可学习的残差连接
-        
-        def compute_output_shape(self, input_shape):
-            return input_shape
+
+            attention = tf.matmul(q, k, transpose_b=True)
+            attention = tf.nn.softmax(attention / tf.sqrt(tf.cast(self.channels // self.reduction_ratio, tf.float32)))
+
+            attended = tf.matmul(attention, v)
+            attended = tf.reshape(attended, tf.shape(x))
+
+            return (1 - self.gamma) * x + self.gamma * attended
+
+        def get_config(self):
+            config = super().get_config()
+            config.update({
+                'reduction_ratio': self.reduction_ratio
+            })
+            return config
+
+        @classmethod
+        def from_config(cls, config):
+            return cls(**config)
     
     x = SelfAttentionLayer(reduction_ratio=4)(x)  # 增加注意力模块的分辨率
     
