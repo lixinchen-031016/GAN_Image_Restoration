@@ -151,10 +151,10 @@ if __name__ == "__main__":
     (_, _, _), (original_test, masked_test, labels_test) = load_cifar100_with_mask()
     
     # 选择测试集中第一张图片
-    test_idx = 0
+    test_idx = 7
     test_img = original_test[test_idx]
     test_mask = masked_test[test_idx]  # 获取对应的遮罩图像
-    
+
     # 修复数据集中的图片（新增传入遮罩图像）
     original, masked, repaired = repair_specific_image(generator, image=test_img, mask_image=test_mask)
     
