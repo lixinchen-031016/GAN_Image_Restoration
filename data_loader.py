@@ -2,7 +2,7 @@ import numpy as np
 
 def load_cifar100_with_mask():
     # 指定本地CIFAR-100数据集路径（需要用户提前准备好）
-    file_path = '/Users/lixinchen/PycharmProjects/cnn_gan_test/cifar-100-python/'  # 请根据实际路径修改
+    file_path = 'cifar-100-python'  # 请根据实际路径修改
 
     import os
     import pickle

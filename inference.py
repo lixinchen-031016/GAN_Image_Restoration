@@ -151,7 +151,7 @@ if __name__ == "__main__":
     (_, _, _), (original_test, masked_test, labels_test) = load_cifar100_with_mask()
     
     # 选择测试集中第一张图片
-    test_idx = 7
+    test_idx = 0
     test_img = original_test[test_idx]
     test_mask = masked_test[test_idx]  # 获取对应的遮罩图像
 
@@ -168,7 +168,7 @@ if __name__ == "__main__":
     show_repair_result(original, masked, repaired, psnr_value, ssim_value)  # 传递指标参数
 
     # 确保结果目录存在
-    result_dir = "/Users/lixinchen/PycharmProjects/cnn_gan_test/results"
+    result_dir = "results"
     os.makedirs(result_dir, exist_ok=True)  # 如果目录已存在，不会报错
     
     # 保存修复后的图像
