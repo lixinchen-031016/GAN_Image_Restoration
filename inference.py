@@ -100,11 +100,11 @@ def process_and_stitch(patches, mask_patches, generator):  # 新增mask_patches�
     # 取平均值得到最终图像
     return output_img / count
 
-def repair_specific_image(generator, image=None, image_path=None, mask_image=None):  # 新增mask_image参数
+def repair_specific_image(generator, image=None, image_path=None, mask_image=None):
     """修复指定图片，支持直接传入图像数组或图片路径"""
     if image is None and image_path is None:
         raise ValueError("必须提供图像数组或图片路径")
-    if mask_image is None:  # 新增遮罩图像校验
+    if mask_image is None:
         raise ValueError("必须提供遮罩图像")
         
     if image is None:
@@ -120,24 +120,21 @@ def repair_specific_image(generator, image=None, image_path=None, mask_image=Non
     else:
         img = image
     
-    # 分割图像为32x32的小块
-    patches, original_shape = split_image_into_patches(img)
-    mask_patches, _ = split_image_into_patches(mask_image)  # 分割遮罩图像
+    # 直接使用原始图像和遮罩进行修复（删除分割逻辑）
+    masked_img = img.copy()
+    masked_img[mask_image[..., 0] == 0] = 0  # 应用遮罩
     
-    # 处理每个小块并拼接结果
-    repaired_img = process_and_stitch(patches, mask_patches, generator)
+    # 生成噪声输入
+    noise = np.random.normal(0, 1, (1, 32, 32, 1))
     
-    # 获取原始图像尺寸
-    orig_h, orig_w = original_shape[:2]
-    
-    # 裁剪到原始尺寸
-    repaired_img = repaired_img[:orig_h, :orig_w, :]
+    # 直接进行图像修复（无需分块处理）
+    repaired_img = generator.predict([np.expand_dims(masked_img, axis=0), noise])
+    repaired_img = np.squeeze(repaired_img, axis=0)
     
     # 将修复后的图像从[0,1]范围转换为[0,255]并转为8位整数
     repaired_img = (repaired_img * 255).astype(np.uint8)
     
-    # 返回原始图像、遮罩图像和修复后的图像（直接使用传入的遮罩图像）
-    masked_img = mask_image[:orig_h, :orig_w, :]  # 使用传入遮罩的裁剪版本
+    # 返回原始图像、遮罩图像和修复后的图像
     return img, masked_img, repaired_img
 
 if __name__ == "__main__":
